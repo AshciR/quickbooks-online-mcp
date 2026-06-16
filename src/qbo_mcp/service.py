@@ -33,3 +33,17 @@ class QBOService:
         body = await self._client.query(sql)
         invoices = body.get("QueryResponse", {}).get("Invoice", [])
         return invoices[0] if invoices else None
+
+    async def search_customers(self, name: str) -> list[dict[str, Any]]:
+        """Find active customers whose DisplayName contains `name` (escaped, case-insensitive).
+
+        Returns up to 20 raw QBO Customer objects; the tool layer trims them to the
+        fields it surfaces. `name` is free text, so it is escaped before reaching SQL.
+        """
+        escaped = escape_qbo_string(name)
+        sql = (
+            f"SELECT * FROM Customer WHERE DisplayName LIKE '%{escaped}%' "
+            "AND Active = true MAXRESULTS 20"
+        )
+        body = await self._client.query(sql)
+        return body.get("QueryResponse", {}).get("Customer", [])

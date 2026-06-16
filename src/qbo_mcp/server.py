@@ -62,24 +62,50 @@ async def health(request: Request) -> PlainTextResponse:
     return PlainTextResponse("ok")
 
 
-@mcp.tool
+@mcp.tool(
+    name="get_invoice",
+    description=(
+        "Retrieve the full detail of a single QuickBooks invoice by its human-facing "
+        "document number (e.g. \"1010\" printed on the invoice) — NOT QuickBooks' internal "
+        "Id. Returns the header fields, every line item (description, quantity, unit price, "
+        "amount), the subtotal/total/balance, the email-delivery status, and a deep_link "
+        "that opens the invoice in the QuickBooks web app. If no invoice carries that "
+        "document number, returns a message saying so. On failure returns a human-readable "
+        "error string."
+    ),
+    tags={"invoices", "read"},
+)
 async def get_invoice(doc_number: str) -> dict[str, Any] | str:
-    """Retrieve the full detail of a single QuickBooks invoice by its document number.
-
-    `doc_number` is the human-facing invoice number printed on the invoice (e.g.
-    "1010") — the value a user reads off an invoice — NOT QuickBooks' internal Id.
-    Returns the header fields, every line item (description, quantity, unit price,
-    amount), the subtotal/total/balance, the email-delivery status, and a `deep_link`
-    that opens the invoice in the QuickBooks web app. If no invoice carries that
-    document number, returns a message saying so. On failure returns a human-readable
-    error string.
-    """
+    """Read one invoice by its human-facing DocNumber (see decorator `description`)."""
     try:
         async with _qbo() as service:
             invoice = await service.find_invoice_by_doc_number(doc_number)
         if invoice is None:
             return f"No invoice found with document number {doc_number!r}."
         return _fmt_invoice(invoice)
+    except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
+        return _format_error(exc)
+
+
+@mcp.tool(
+    name="search_customers",
+    description=(
+        "Find QuickBooks customers by (partial) display name — the first step before "
+        "creating an invoice. Use this to turn a customer name the user typed into the "
+        "customer_id that get_invoices and create_invoice require. The name is matched "
+        "case-insensitively against the customer's display name; partial matches work. "
+        "Returns up to 20 active customers, each with id, display_name, company_name, "
+        "email, and balance (their open balance). If several match, show them to the user "
+        "and confirm which one they mean. On failure returns a human-readable error string."
+    ),
+    tags={"customers", "read"},
+)
+async def search_customers(name: str) -> list[dict[str, Any]] | str:
+    """Find active customers by partial display name (see decorator `description`)."""
+    try:
+        async with _qbo() as service:
+            customers = await service.search_customers(name)
+        return [_fmt_customer(c) for c in customers]
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)
 
@@ -182,6 +208,17 @@ def _fmt_invoice(inv: dict[str, Any]) -> dict[str, Any]:
         "balance": inv.get("Balance"),
         "email_status": inv.get("EmailStatus"),
         "deep_link": INVOICE_DEEP_LINK.format(id=invoice_id),
+    }
+
+
+def _fmt_customer(cust: dict[str, Any]) -> dict[str, Any]:
+    """Trim a raw QBO Customer object to the fields search_customers surfaces."""
+    return {
+        "id": cust.get("Id"),
+        "display_name": cust.get("DisplayName"),
+        "company_name": cust.get("CompanyName"),
+        "email": (cust.get("PrimaryEmailAddr") or {}).get("Address"),
+        "balance": cust.get("Balance"),
     }
 
 

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import re
 import time
+from typing import Any, AsyncGenerator
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from httpx import AsyncClient
 from pytest_httpx import HTTPXMock
 
 from qbo_mcp.config import Settings
@@ -18,34 +20,66 @@ QUERY_URL = re.compile(
 )
 
 
-async def test_find_invoice_by_doc_number_escapes_and_returns_first_match(
-    http: httpx.AsyncClient, httpx_mock: HTTPXMock
-) -> None:
-    # Given a service over a fresh-token client and QBO returning an invoice for the query
-    service = QBOService(QBOClient(_settings(), _store(http), http))
-    httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": [{"Id": "130"}]}})
+class TestInvoiceOperations:
+    async def test_find_invoice_by_doc_number_escapes_and_returns_first_match(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client and QBO returning an invoice for the query
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": [{"Id": "130"}]}})
 
-    # When a DocNumber containing a single quote is resolved
-    invoice = await service.find_invoice_by_doc_number("O'1037")
+        # When a DocNumber containing a single quote is resolved
+        invoice = await service.find_invoice_by_doc_number("O'1037")
 
-    # Then the outbound SQL filtered on the escaped DocNumber and the first match is returned
-    sent_sql = parse_qs(urlparse(str(httpx_mock.get_requests()[-1].url)).query)["query"][0]
-    assert "DocNumber = 'O''1037'" in sent_sql
-    assert invoice == {"Id": "130"}
+        # Then the outbound SQL filtered on the escaped DocNumber and the first match is returned
+        sent_sql = parse_qs(urlparse(str(httpx_mock.get_requests()[-1].url)).query)["query"][0]
+        assert "DocNumber = 'O''1037'" in sent_sql
+        assert invoice == {"Id": "130"}
+
+    async def test_find_invoice_by_doc_number_returns_none_when_absent(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client and QBO returning no invoices
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {}})
+
+        # When an unknown DocNumber is resolved
+        invoice = await service.find_invoice_by_doc_number("9999")
+
+        # Then None is returned rather than an error or empty object
+        assert invoice is None
 
 
-async def test_find_invoice_by_doc_number_returns_none_when_absent(
-    http: httpx.AsyncClient, httpx_mock: HTTPXMock
-) -> None:
-    # Given a service over a fresh-token client and QBO returning no invoices
-    service = QBOService(QBOClient(_settings(), _store(http), http))
-    httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {}})
+class TestCustomerOperations:
+    async def test_search_customers_escapes_name_and_filters_active(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client and QBO returning a customer list
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Customer": [{"Id": "58"}]}})
 
-    # When an unknown DocNumber is resolved
-    invoice = await service.find_invoice_by_doc_number("9999")
+        # When searching with a name containing a single quote
+        customers = await service.search_customers("Amy's")
 
-    # Then None is returned rather than an error or empty object
-    assert invoice is None
+        # Then the SQL escaped the name, filtered Active customers, and capped at 20
+        sent_sql = parse_qs(urlparse(str(httpx_mock.get_requests()[-1].url)).query)["query"][0]
+        assert "DisplayName LIKE '%Amy''s%'" in sent_sql
+        assert "Active = true" in sent_sql
+        assert "MAXRESULTS 20" in sent_sql
+        assert customers == [{"Id": "58"}]
+
+    async def test_search_customers_returns_empty_list_when_none_match(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client and QBO returning no customers
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {}})
+
+        # When searching for a name that matches nothing
+        customers = await service.search_customers("Nobody")
+
+        # Then an empty list is returned rather than an error
+        assert customers == []
 
 
 # --- helpers and fixtures --------------------------------------------------
@@ -77,6 +111,6 @@ def _store(http: httpx.AsyncClient) -> InMemoryTokenStore:
 
 
 @pytest.fixture
-async def http() -> httpx.AsyncClient:
+async def http() -> AsyncGenerator[AsyncClient, Any]:
     async with httpx.AsyncClient() as client:
         yield client
