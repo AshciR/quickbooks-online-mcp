@@ -49,6 +49,35 @@ class TestInvoiceOperations:
         # Then None is returned rather than an error or empty object
         assert invoice is None
 
+    async def test_get_invoices_validates_id_builds_dates_and_orders(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client and QBO returning an invoice list
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": [{"Id": "9"}]}})
+
+        # When listing a customer's invoices with both date bounds
+        invoices = await service.get_invoices("1", from_date="2026-01-01", to_date="2026-12-31")
+
+        # Then the SQL filtered on CustomerRef, bounded TxnDate, and ordered newest-first
+        sent_sql = parse_qs(urlparse(str(httpx_mock.get_requests()[-1].url)).query)["query"][0]
+        assert "CustomerRef = '1'" in sent_sql
+        assert "TxnDate >= '2026-01-01'" in sent_sql
+        assert "TxnDate <= '2026-12-31'" in sent_sql
+        assert "ORDER BY TxnDate DESC MAXRESULTS 50" in sent_sql
+        assert invoices == [{"Id": "9"}]
+
+    async def test_get_invoices_rejects_non_numeric_customer_id(
+        self, http: httpx.AsyncClient, httpx_mock: HTTPXMock
+    ) -> None:
+        # Given a service over a fresh-token client (no QBO call should be made)
+        service = QBOService(QBOClient(_settings(), _store(http), http))
+
+        # When a non-numeric customer id is passed
+        # Then it raises ValueError before any request goes out
+        with pytest.raises(ValueError):
+            await service.get_invoices("1; DROP TABLE")
+
 
 class TestCustomerOperations:
     async def test_search_customers_escapes_name_and_filters_active(

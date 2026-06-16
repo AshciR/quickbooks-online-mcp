@@ -14,7 +14,22 @@ from __future__ import annotations
 
 from typing import Any
 
-from .qbo_client import QBOClient, escape_qbo_string
+from pydantic import BaseModel
+
+from .qbo_client import QBOClient, escape_qbo_string, validate_date, validate_id
+
+
+class LineInput(BaseModel):
+    """One requested invoice line, as supplied by the create_invoice tool caller.
+
+    `item_id` is a QBO Item Id (from list_items). When `unit_price` is omitted the
+    service looks it up from the Item itself, so callers can rely on catalog pricing.
+    """
+
+    item_id: str
+    quantity: float = 1
+    unit_price: float | None = None
+    description: str | None = None
 
 
 class QBOService:
@@ -64,3 +79,29 @@ class QBOService:
         sql += " MAXRESULTS 100"
         body = await self._client.query(sql)
         return body.get("QueryResponse", {}).get("Item", [])
+
+    async def get_invoices(
+        self,
+        customer_id: str,
+        from_date: str | None = None,
+        to_date: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List a customer's invoices, most recent first (up to 50).
+
+        `customer_id` must be numeric (it is QBO's internal Customer Id from
+        `search_customers`) and the optional dates must be ISO `YYYY-MM-DD`; all are
+        validated before reaching SQL. The optional dates bound `TxnDate` inclusively.
+        Status (open/paid) filtering is left to the caller — see the tool layer.
+        Returns raw QBO Invoice objects.
+        """
+        validate_id(customer_id)
+        sql = f"SELECT * FROM Invoice WHERE CustomerRef = '{customer_id}'"
+        if from_date:
+            validate_date(from_date)
+            sql += f" AND TxnDate >= '{from_date}'"
+        if to_date:
+            validate_date(to_date)
+            sql += f" AND TxnDate <= '{to_date}'"
+        sql += " ORDER BY TxnDate DESC MAXRESULTS 50"
+        body = await self._client.query(sql)
+        return body.get("QueryResponse", {}).get("Invoice", [])

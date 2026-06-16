@@ -6,7 +6,7 @@ unprefixed.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastmcp import FastMCP
 
@@ -38,6 +38,34 @@ async def get_invoice(doc_number: str) -> dict[str, Any] | str:
         if invoice is None:
             return f"No invoice found with document number {doc_number!r}."
         return _fmt_invoice(invoice)
+    except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
+        return _format_error(exc)
+
+
+@invoices.tool(
+    name="get_invoices",
+    description=(
+        "List a customer's invoices, most recent first (up to 50). customer_id is "
+        "QuickBooks' internal Customer Id — get it from search_customers, not a name. "
+        "Optional status filters to 'open' (balance still owed) or 'paid' (fully paid); "
+        "default 'all'. Optional from_date/to_date (ISO YYYY-MM-DD) bound the invoice date "
+        "inclusively. Each result has doc_number, id, txn_date, due_date, total, balance, "
+        "and a one-line summary of its line items; call get_invoice with a doc_number for "
+        "full detail. On failure returns a human-readable error string."
+    ),
+    tags={"invoices", "read"},
+)
+async def get_invoices(
+    customer_id: str,
+    status: Literal["all", "open", "paid"] = "all",
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> list[dict[str, Any]] | str:
+    """List a customer's invoices with optional status/date filters (see decorator `description`)."""
+    try:
+        async with _qbo() as service:
+            results = await service.get_invoices(customer_id, from_date, to_date)
+        return [_fmt_invoice_summary(inv) for inv in results if _matches_status(inv, status)]
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)
 
@@ -124,3 +152,44 @@ def _fmt_invoice(inv: dict[str, Any]) -> dict[str, Any]:
         "email_status": inv.get("EmailStatus"),
         "deep_link": INVOICE_DEEP_LINK.format(id=invoice_id),
     }
+
+
+def _fmt_invoice_summary(inv: dict[str, Any]) -> dict[str, Any]:
+    """Reduce a raw QBO Invoice to the list-row shape get_invoices returns.
+
+    Lighter than `_fmt_invoice`: header fields plus a one-line `summary` joining the
+    line-item descriptions (via `_line_descriptions`). Use get_invoice for full lines.
+    """
+    descriptions = _line_descriptions(inv)
+    return {
+        "doc_number": inv.get("DocNumber"),
+        "id": inv.get("Id"),
+        "txn_date": inv.get("TxnDate"),
+        "due_date": inv.get("DueDate"),
+        "total": inv.get("TotalAmt"),
+        "balance": inv.get("Balance"),
+        "summary": "; ".join(descriptions),
+    }
+
+
+def _line_descriptions(inv: dict[str, Any]) -> list[str]:
+    """Ordered, non-empty descriptions of an invoice's item/text lines.
+
+    Walks the same `SalesItemLineDetail` / `DescriptionOnly` lines `_fmt_invoice`
+    surfaces, skipping QBO's computed SubTotal/Discount lines and blank descriptions.
+    """
+    out: list[str] = []
+    for line in inv.get("Line", []):
+        if line.get("DetailType") in ("SalesItemLineDetail", "DescriptionOnly"):
+            desc = line.get("Description")
+            if desc:
+                out.append(desc)
+    return out
+
+
+def _matches_status(inv: dict[str, Any], status: Literal["all", "open", "paid"]) -> bool:
+    """Filter on QBO's own Balance: open == balance owed (>0), paid == settled (0)."""
+    if status == "all":
+        return True
+    balance = inv.get("Balance") or 0
+    return balance > 0 if status == "open" else balance == 0

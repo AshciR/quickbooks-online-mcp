@@ -85,6 +85,84 @@ class TestInvoiceTools:
         # Then it returns the re-run-bootstrap message as a string, not a raised traceback
         assert result == "QBO authorization expired — re-run scripts/bootstrap_oauth.py"
 
+    async def test_get_invoices_validates_id_and_summarizes(self, httpx_mock: HTTPXMock) -> None:
+        # Given a fresh token and QBO returning a customer's invoices
+        _mock_token(httpx_mock)
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": self._invoice_list_fixture()}})
+
+        # When get_invoices is called for a customer with the default 'all' status
+        result = await _call_tool("get_invoices", {"customer_id": "1"})
+
+        # Then the query filtered on the customer and each row carries a one-line summary
+        sent_sql = parse_qs(urlparse(str(httpx_mock.get_requests()[-1].url)).query)["query"][0]
+        assert "CustomerRef = '1'" in sent_sql
+        assert [r["doc_number"] for r in result] == ["1021", "1001"]
+        assert result[0]["summary"] == "Rock Fountain; Pump"
+        assert result[1]["summary"] == "Weekly Gardening Service"
+
+    async def test_get_invoices_status_open_filters_on_balance(self, httpx_mock: HTTPXMock) -> None:
+        # Given a fresh token and QBO returning one open (balance>0) and one paid (balance=0) invoice
+        _mock_token(httpx_mock)
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": self._invoice_list_fixture()}})
+
+        # When get_invoices is called with status='open'
+        result = await _call_tool("get_invoices", {"customer_id": "1", "status": "open"})
+
+        # Then only the invoice with a non-zero balance is returned
+        assert [r["doc_number"] for r in result] == ["1021"]
+        assert result[0]["balance"] == 239.0
+
+    async def test_get_invoices_status_paid_filters_on_balance(self, httpx_mock: HTTPXMock) -> None:
+        # Given a fresh token and QBO returning one open and one paid invoice
+        _mock_token(httpx_mock)
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": self._invoice_list_fixture()}})
+
+        # When get_invoices is called with status='paid'
+        result = await _call_tool("get_invoices", {"customer_id": "1", "status": "paid"})
+
+        # Then only the fully-paid (zero balance) invoice is returned
+        assert [r["doc_number"] for r in result] == ["1001"]
+        assert result[0]["balance"] == 0
+
+    async def test_get_invoices_rejects_non_numeric_customer_id(self) -> None:
+        # Given: no QBO mocks — validation must fail before any token load or query
+
+        # When get_invoices is called with a non-numeric customer id
+        result = await _call_tool("get_invoices", {"customer_id": "abc"})
+
+        # Then it returns a readable invalid-input string, not a raised traceback
+        assert result.startswith("Invalid input:")
+
+    @staticmethod
+    def _invoice_list_fixture() -> list[dict[str, Any]]:
+        return [
+            {
+                "Id": "67",
+                "DocNumber": "1021",
+                "TxnDate": "2026-04-25",
+                "DueDate": "2026-05-25",
+                "TotalAmt": 459.0,
+                "Balance": 239.0,
+                "Line": [
+                    {"DetailType": "SalesItemLineDetail", "Description": "Rock Fountain", "Amount": 275.0},
+                    {"DetailType": "SalesItemLineDetail", "Description": "Pump", "Amount": 184.0},
+                    {"DetailType": "SubTotalLineDetail", "Amount": 459.0},
+                ],
+            },
+            {
+                "Id": "9",
+                "DocNumber": "1001",
+                "TxnDate": "2026-05-14",
+                "DueDate": "2026-06-13",
+                "TotalAmt": 108.0,
+                "Balance": 0,
+                "Line": [
+                    {"DetailType": "SalesItemLineDetail", "Description": "Weekly Gardening Service", "Amount": 108.0},
+                    {"DetailType": "SubTotalLineDetail", "Amount": 108.0},
+                ],
+            },
+        ]
+
     @staticmethod
     def _invoice_fixture() -> dict[str, Any]:
         return {
