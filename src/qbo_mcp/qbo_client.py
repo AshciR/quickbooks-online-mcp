@@ -43,24 +43,13 @@ class QBOClient:
             headers={"Request-Id": uuid.uuid4().hex, "Content-Type": "application/json"},
         )
 
-    async def find_invoice_by_doc_number(self, doc_number: str) -> dict[str, Any] | None:
-        """Resolve a human-facing invoice DocNumber (e.g. "1037") to its full object.
+    async def query(self, sql: str) -> dict[str, Any]:
+        """Run a raw QBO SQL query and return the parsed response body.
 
-        Users know the document number printed on the invoice, not QBO's internal Id,
-        so this wraps the private `_query` with an escaped `DocNumber` filter. Returns
-        the first matching invoice, or None when no invoice carries that DocNumber.
-        """
-        sql = f"SELECT * FROM Invoice WHERE DocNumber = '{escape_qbo_string(doc_number)}'"
-        body = await self._query(sql)
-        invoices = body.get("QueryResponse", {}).get("Invoice", [])
-        return invoices[0] if invoices else None
-
-    async def _query(self, sql: str) -> dict[str, Any]:
-        """Internal QBO SQL passthrough.
-
-        Must NEVER be exposed via a public MCP tool or accept arbitrary
-        caller-supplied SQL — public methods build queries with validated
-        parameters and escape free-text values via escape_qbo_string().
+        This is a generic transport primitive: it does no validation or escaping.
+        Callers building SQL from user input must validate ids/dates and escape
+        free text first — that responsibility lives in `QBOService`, whose typed
+        methods are the only thing MCP tools should call (never `query` directly).
         """
         return await self._request(
             "GET", self._company_path("/query"), params={"query": sql}

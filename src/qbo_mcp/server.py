@@ -42,6 +42,7 @@ from .qbo_client import (
     QBOFaultError,
     QBORateLimitError,
 )
+from .service import QBOService
 from .token_store import TokenStore
 
 DEFAULT_PORT = 8080
@@ -74,8 +75,8 @@ async def get_invoice(doc_number: str) -> dict[str, Any] | str:
     error string.
     """
     try:
-        async with _qbo() as client:
-            invoice = await client.find_invoice_by_doc_number(doc_number)
+        async with _qbo() as service:
+            invoice = await service.find_invoice_by_doc_number(doc_number)
         if invoice is None:
             return f"No invoice found with document number {doc_number!r}."
         return _fmt_invoice(invoice)
@@ -92,12 +93,15 @@ def main() -> None:
 
 
 @contextlib.asynccontextmanager
-async def _qbo() -> AsyncIterator[QBOClient]:
-    """Yield a QBOClient backed by a fresh httpx client (mirrors smoke_test.py)."""
+async def _qbo() -> AsyncIterator[QBOService]:
+    """Yield a QBOService over a QBOClient backed by a fresh httpx client.
+
+    Mirrors smoke_test.py's wiring; the service is the seam every tool calls.
+    """
     settings = get_settings()
     async with httpx.AsyncClient(timeout=30.0) as http:
         store = TokenStore(settings, http)
-        yield QBOClient(settings, store, http)
+        yield QBOService(QBOClient(settings, store, http))
 
 
 def _fmt_invoice(inv: dict[str, Any]) -> dict[str, Any]:

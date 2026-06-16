@@ -36,7 +36,7 @@ When creating or editing a Python file, order definitions top-down: the **primar
 
 ## Architecture
 
-Three modules in `src/qbo_mcp/` form a layered stack; understanding their contract matters because the invariants are easy to break:
+The modules in `src/qbo_mcp/` form a layered stack — `config` → `token_store` → `qbo_client` (generic transport) → `service` (business logic) → `server` (MCP tools) — and understanding their contract matters because the invariants are easy to break:
 
 **`config.py`** — `pydantic_settings.BaseSettings` reads 7 env vars from `.env`. `Settings.qbo_base_url` switches sandbox vs production host. `get_settings()` is `lru_cache`d.
 
@@ -49,7 +49,9 @@ Three modules in `src/qbo_mcp/` form a layered stack; understanding their contra
 - **Auto-refresh window** of 300 s (`REFRESH_SKEW_SECONDS`) on top of one-shot 401-retry. A 401 forces one refresh + one retry; a second 401 propagates as `httpx.HTTPStatusError`.
 - **Error taxonomy:** 429 → `QBORateLimitError`; QBO `Fault` body (in 4xx OR 200) → `QBOFaultError(message, detail)`; missing tokens OR `invalid_grant` on refresh → `QBOAuthExpiredError` with the fixed message `"QBO authorization expired — re-run scripts/bootstrap_oauth.py"`.
 - **`create()` sends `Request-Id: uuid4().hex`** so retries can't double-post transactions. Any new mutating helper must do the same.
-- **`_query(sql)` is intentionally private.** It is the only entrypoint that takes raw QBO SQL. Public methods build query strings from typed params using the three validators in this module: `validate_id` (`^\d+$`), `validate_date` (`date.fromisoformat`), and `escape_qbo_string` (doubles single quotes). Do not expose `_query` directly via any MCP tool — wrap it in a typed method that validates and escapes first.
+- **`query(sql)` is a generic transport primitive** — the only entrypoint that takes raw QBO SQL. It does no validation or escaping itself. Building SQL from caller input is the job of the business layer (`service.py`), not the transport: see below.
+
+**`service.py`** — `QBOService(client: QBOClient)` holds the entity-aware, business-level operations (e.g. `find_invoice_by_doc_number`; upcoming `create_invoice`, `get_invoices`, `search_customers`). It composes the generic `QBOClient` primitives (`read`, `create`, `query`) and is the seam every MCP tool calls. The validation contract lives here: any method building SQL from caller input MUST validate ids/dates and escape free text first, using `validate_id` (`^\d+$`), `validate_date` (`date.fromisoformat`), and `escape_qbo_string` (doubles single quotes) from `qbo_client`. MCP tools call these typed `QBOService` methods — never `client.query` directly.
 
 `scripts/bootstrap_oauth.py` runs the one-time auth-code flow on `localhost:8000/callback`, exchanges the code, writes the bundle to Upstash, and prints the `realmId` to put in `.env`. `scripts/smoke_test.py` deliberately calls `_refresh` before the read to exercise rotation end-to-end.
 
