@@ -43,6 +43,18 @@ class QBOClient:
             headers={"Request-Id": uuid.uuid4().hex, "Content-Type": "application/json"},
         )
 
+    async def find_invoice_by_doc_number(self, doc_number: str) -> dict[str, Any] | None:
+        """Resolve a human-facing invoice DocNumber (e.g. "1037") to its full object.
+
+        Users know the document number printed on the invoice, not QBO's internal Id,
+        so this wraps the private `_query` with an escaped `DocNumber` filter. Returns
+        the first matching invoice, or None when no invoice carries that DocNumber.
+        """
+        sql = f"SELECT * FROM Invoice WHERE DocNumber = '{escape_qbo_string(doc_number)}'"
+        body = await self._query(sql)
+        invoices = body.get("QueryResponse", {}).get("Invoice", [])
+        return invoices[0] if invoices else None
+
     async def _query(self, sql: str) -> dict[str, Any]:
         """Internal QBO SQL passthrough.
 

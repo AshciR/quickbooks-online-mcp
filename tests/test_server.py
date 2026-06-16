@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import re
+import time
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+import httpx
+from fastmcp import Client
+from pytest_httpx import HTTPXMock
+
+from qbo_mcp.server import mcp
+from qbo_mcp.token_store import TokenBundle
+
+QUERY_URL = re.compile(
+    r"https://sandbox-quickbooks\.api\.intuit\.com/v3/company/9999/query\?.*"
+)
+UPSTASH_GET_URL = "https://upstash.test/get/qbo:tokens"
+
+
+async def test_server_registers_get_invoice_tool() -> None:
+    # Given the in-memory MCP server
+    # When its tool catalog is listed
+    async with _client() as client:
+        tools = await client.list_tools()
+
+    # Then get_invoice is registered with a single required string doc_number param
+    by_name = {tool.name: tool for tool in tools}
+    assert "get_invoice" in by_name
+    schema = by_name["get_invoice"].inputSchema
+    assert schema["required"] == ["doc_number"]
+    assert schema["properties"]["doc_number"]["type"] == "string"
+
+
+async def test_get_invoice_queries_by_doc_number_and_maps_fields(httpx_mock: HTTPXMock) -> None:
+    # Given a fresh token and QBO returning the invoice for a DocNumber query
+    _mock_token(httpx_mock)
+    httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": [_invoice_fixture()]}})
+
+    # When get_invoice is called with the human-facing document number
+    result = await _call_tool("get_invoice", {"doc_number": "1037"})
+
+    # Then the outbound query filtered on the escaped DocNumber, and the trimmed
+    # header, sales lines, computed subtotal, and deep link are returned
+    sent_url = httpx_mock.get_requests()[-1].url
+    sent_params = parse_qs(urlparse(str(sent_url)).query)
+    sent_sql = sent_params["query"][0]
+    assert "DocNumber = '1037'" in sent_sql
+    assert result["doc_number"] == "1037"
+    assert result["customer"] == "Amy's Bird Sanctuary"
+    assert result["email_status"] == "NotSet"
+    assert result["deep_link"] == "https://app.qbo.intuit.com/app/invoice?txnId=130"
+    # The DescriptionOnly text line is kept inline in its original position...
+    assert [line["description"] for line in result["lines"]] == [
+        "Custom design",
+        "Service Period: May 2026",
+        "Hosting",
+    ]
+    # ...with null numerics so it doesn't read as a priced item
+    text_line = result["lines"][1]
+    assert text_line["qty"] is None and text_line["unit_price"] is None and text_line["amount"] is None
+    # subtotal/discount come straight from QBO's own lines, total from TotalAmt
+    assert result["subtotal"] == 387.5  # SubTotalLineDetail.Amount, not a re-sum
+    assert result["discount"] == 38.75  # DiscountLineDetail.Amount
+    assert result["total"] == 348.75  # 387.5 - 38.75
+
+
+async def test_get_invoice_not_found_returns_message(httpx_mock: HTTPXMock) -> None:
+    # Given a fresh token and QBO returning no invoices for the DocNumber query
+    _mock_token(httpx_mock)
+    httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {}})
+
+    # When get_invoice is called with an unknown document number
+    result = await _call_tool("get_invoice", {"doc_number": "9999"})
+
+    # Then it returns a readable not-found message, not an error or empty invoice
+    assert result == "No invoice found with document number '9999'."
+
+
+async def test_get_invoice_auth_expired_returns_bootstrap_string(httpx_mock: HTTPXMock) -> None:
+    # Given Upstash holding no token bundle (QBO auth never bootstrapped)
+    httpx_mock.add_response(url=UPSTASH_GET_URL, json={"result": None})
+
+    # When the get_invoice tool is called
+    result = await _call_tool("get_invoice", {"doc_number": "1037"})
+
+    # Then it returns the re-run-bootstrap message as a string, not a raised traceback
+    assert result == "QBO authorization expired — re-run scripts/bootstrap_oauth.py"
+
+
+async def test_health_route_returns_ok_unauthenticated() -> None:
+    # Given the server's ASGI app and no Authorization header
+    transport = httpx.ASGITransport(app=mcp.http_app())
+
+    # When GET /health is requested
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/health")
+
+    # Then it responds 200 with a plain "ok" body
+    assert resp.status_code == 200
+    assert resp.text == "ok"
+
+
+# --- helpers and fixtures --------------------------------------------------
+
+
+def _client() -> Client:
+    # The in-memory FastMCPTransport bypasses the server's bearer auth (and rejects
+    # an `auth=` arg) — bearer enforcement only applies over the HTTP transport.
+    return Client(mcp)
+
+
+async def _call_tool(name: str, args: dict[str, Any]) -> Any:
+    async with _client() as client:
+        result = await client.call_tool(name, args)
+    return result.data
+
+
+def _mock_token(httpx_mock: HTTPXMock) -> None:
+    bundle = TokenBundle(
+        access_token="access-1",
+        refresh_token="refresh-1",
+        access_expires_at=int(time.time()) + 3600,
+    )
+    httpx_mock.add_response(url=UPSTASH_GET_URL, json={"result": bundle.model_dump_json()})
+
+
+def _invoice_fixture() -> dict[str, Any]:
+    return {
+        "Id": "130",
+        "DocNumber": "1037",
+        "TxnDate": "2026-06-01",
+        "DueDate": "2026-07-01",
+        "CustomerRef": {"value": "58", "name": "Amy's Bird Sanctuary"},
+        "TotalAmt": 348.75,
+        "Balance": 348.75,
+        "EmailStatus": "NotSet",
+        "Line": [
+            {
+                "DetailType": "SalesItemLineDetail",
+                "Amount": 250.0,
+                "Description": "Custom design",
+                "SalesItemLineDetail": {
+                    "ItemRef": {"value": "1", "name": "Design"},
+                    "Qty": 5,
+                    "UnitPrice": 50,
+                },
+            },
+            {
+                "DetailType": "DescriptionOnly",
+                "Description": "Service Period: May 2026",
+                "DescriptionLineDetail": {},
+            },
+            {
+                "DetailType": "SalesItemLineDetail",
+                "Amount": 137.5,
+                "Description": "Hosting",
+                "SalesItemLineDetail": {
+                    "ItemRef": {"value": "2", "name": "Hosting"},
+                    "Qty": 2.75,
+                    "UnitPrice": 50,
+                },
+            },
+            {"DetailType": "SubTotalLineDetail", "Amount": 387.5},
+            {
+                "DetailType": "DiscountLineDetail",
+                "Amount": 38.75,
+                "DiscountLineDetail": {"PercentBased": True, "DiscountPercent": 10},
+            },
+        ],
+    }

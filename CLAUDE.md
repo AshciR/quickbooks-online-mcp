@@ -20,6 +20,16 @@ There is no MCP server entrypoint yet — see "Scope" below.
 
 The README describes a FastMCP server, but the server itself is **deliberately not yet implemented**. What exists today is the auth + API client foundation that an MCP server will sit on top of. When adding the FastMCP layer, fetch current docs from `https://gofastmcp.com/llms.txt` first — the FastMCP API has changed across versions, don't rely on memorized patterns.
 
+## Development workflow
+
+When introducing a new idea or pattern in this codebase (a new layer, integration, or
+class of feature), build the **thinnest end-to-end vertical slice first** and sanity-check
+it — its test plus a live run — *before* writing the rest of the feature. Prove the whole
+path through one representative case so the wiring, auth, error handling, and test harness
+are all confirmed; only then fan out to the remaining cases, which become mechanical repeats
+of the proven pattern. Example: the FastMCP server landed `get_invoice` (read-only, safe to
+run live) end-to-end first, then the other four tools followed.
+
 ## File layout rule
 
 When creating or editing a Python file, order definitions top-down: the **primary / public function (or class)** comes first, immediately under the imports, so a reader sees the entrypoint without scrolling. **Helper functions, private utilities, and pytest fixtures go at the bottom** of the file. This applies to source modules and test modules alike — e.g. in a test file, the `test_*` functions come first and the `_fresh_bundle()` / `_company_url()` / `@pytest.fixture` helpers come last. Module-level constants stay near the top (under imports, above the primary definition).
