@@ -110,6 +110,28 @@ async def search_customers(name: str) -> list[dict[str, Any]] | str:
         return _format_error(exc)
 
 
+@mcp.tool(
+    name="list_items",
+    description=(
+        "List the active products/services in the QuickBooks item catalog — the source of "
+        "the item_id each create_invoice line needs. Pass an optional name substring to "
+        "narrow the catalog (case-insensitive, partial match); omit it to list everything. "
+        "Returns id, name, type (Service/NonInventory/Inventory), description, and unit_price. "
+        "Use the returned unit_price as the default line price unless the user overrides it. "
+        "On failure returns a human-readable error string."
+    ),
+    tags={"items", "read"},
+)
+async def list_items(name: str | None = None) -> list[dict[str, Any]] | str:
+    """List active sellable catalog items, optional name filter (see decorator `description`)."""
+    try:
+        async with _qbo() as service:
+            items = await service.list_items(name)
+        return [_fmt_item(i) for i in items]
+    except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
+        return _format_error(exc)
+
+
 def main() -> None:
     port = int(os.environ.get("PORT", DEFAULT_PORT))
     mcp.run(transport="http", host="0.0.0.0", port=port)
@@ -219,6 +241,17 @@ def _fmt_customer(cust: dict[str, Any]) -> dict[str, Any]:
         "company_name": cust.get("CompanyName"),
         "email": (cust.get("PrimaryEmailAddr") or {}).get("Address"),
         "balance": cust.get("Balance"),
+    }
+
+
+def _fmt_item(item: dict[str, Any]) -> dict[str, Any]:
+    """Trim a raw QBO Item object to the fields list_items surfaces."""
+    return {
+        "id": item.get("Id"),
+        "name": item.get("Name"),
+        "type": item.get("Type"),
+        "description": item.get("Description"),
+        "unit_price": item.get("UnitPrice"),
     }
 
 

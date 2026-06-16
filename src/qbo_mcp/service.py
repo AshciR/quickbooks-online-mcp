@@ -47,3 +47,20 @@ class QBOService:
         )
         body = await self._client.query(sql)
         return body.get("QueryResponse", {}).get("Customer", [])
+
+    async def list_items(self, name: str | None = None) -> list[dict[str, Any]]:
+        """List active sellable items (Service / NonInventory / Inventory).
+
+        These are the catalog entries an invoice line references by Id. An optional
+        `name` substring narrows the list (escaped before reaching SQL). Returns raw
+        QBO Item objects; the tool layer trims them.
+        """
+        sql = (
+            "SELECT * FROM Item WHERE Type IN ('Service', 'NonInventory', 'Inventory') "
+            "AND Active = true"
+        )
+        if name:
+            sql += f" AND Name LIKE '%{escape_qbo_string(name)}%'"
+        sql += " MAXRESULTS 100"
+        body = await self._client.query(sql)
+        return body.get("QueryResponse", {}).get("Item", [])
