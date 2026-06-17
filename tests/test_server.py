@@ -12,9 +12,10 @@ from pytest_httpx import HTTPXMock
 from qbo_mcp.server import mcp
 from qbo_mcp.token_store import TokenBundle
 
-QUERY_URL = re.compile(
-    r"https://sandbox-quickbooks\.api\.intuit\.com/v3/company/9999/query\?.*"
-)
+_BASE = r"https://sandbox-quickbooks\.api\.intuit\.com/v3/company/9999"
+QUERY_URL = re.compile(rf"{_BASE}/query\?.*")
+ITEM_READ_URL = re.compile(rf"{_BASE}/item/\d+\?.*")
+INVOICE_CREATE_URL = re.compile(rf"{_BASE}/invoice\?.*")
 UPSTASH_GET_URL = "https://upstash.test/get/qbo:tokens"
 
 
@@ -129,6 +130,54 @@ class TestInvoiceTools:
 
         # When get_invoices is called with a non-numeric customer id
         result = await _call_tool("get_invoices", {"customer_id": "abc"})
+
+        # Then it returns a readable invalid-input string, not a raised traceback
+        assert result.startswith("Invalid input:")
+
+    async def test_server_registers_create_invoice_tool(self) -> None:
+        # Given the in-memory MCP server
+        # When its tool catalog is listed
+        async with _client() as client:
+            tools = await client.list_tools()
+
+        # Then create_invoice is registered requiring customer_id and lines
+        by_name = {tool.name: tool for tool in tools}
+        assert "create_invoice" in by_name
+        schema = by_name["create_invoice"].inputSchema
+        assert set(schema["required"]) == {"customer_id", "lines"}
+
+    async def test_create_invoice_returns_id_doc_number_and_deep_link(self, httpx_mock: HTTPXMock) -> None:
+        # Given a fresh token (loaded once per QBO call: Item read + create), the Item
+        # price read, and QBO returning the created invoice
+        _mock_token(httpx_mock, times=2)
+        httpx_mock.add_response(url=ITEM_READ_URL, json={"Item": {"Id": "4", "UnitPrice": 75}})
+        httpx_mock.add_response(
+            url=INVOICE_CREATE_URL,
+            json={"Invoice": {"Id": "145", "DocNumber": "1038", "TotalAmt": 150.0}},
+        )
+
+        # When create_invoice is called with a single line that omits unit_price
+        result = await _call_tool(
+            "create_invoice",
+            {"customer_id": "1", "lines": [{"item_id": "4", "quantity": 2}]},
+        )
+
+        # Then the tool returns the trimmed created-invoice shape with a deep link
+        assert result == {
+            "id": "145",
+            "doc_number": "1038",
+            "total": 150.0,
+            "deep_link": "https://app.qbo.intuit.com/app/invoice?txnId=145",
+        }
+
+    async def test_create_invoice_rejects_non_numeric_customer_id(self) -> None:
+        # Given: no QBO mocks — validation must fail before any token load or write
+
+        # When create_invoice is called with a non-numeric customer id
+        result = await _call_tool(
+            "create_invoice",
+            {"customer_id": "abc", "lines": [{"item_id": "4", "quantity": 1}]},
+        )
 
         # Then it returns a readable invalid-input string, not a raised traceback
         assert result.startswith("Invalid input:")
@@ -353,11 +402,14 @@ async def _call_tool(name: str, args: dict[str, Any]) -> Any:
     return result.data
 
 
-def _mock_token(httpx_mock: HTTPXMock) -> None:
+def _mock_token(httpx_mock: HTTPXMock, times: int = 1) -> None:
+    # Each QBO request loads the token, so a tool that makes N QBO calls (e.g.
+    # create_invoice does an Item read + the create) needs N single-use responses.
     bundle = TokenBundle(
         access_token="access-1",
         refresh_token="refresh-1",
         access_expires_at=int(time.time()) + 3600,
     )
-    httpx_mock.add_response(url=UPSTASH_GET_URL, json={"result": bundle.model_dump_json()})
+    for _ in range(times):
+        httpx_mock.add_response(url=UPSTASH_GET_URL, json={"result": bundle.model_dump_json()})
 

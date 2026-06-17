@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
+from ..service import LineInput
 from .shared import _format_error, _qbo
 
 INVOICE_DEEP_LINK = "https://app.qbo.intuit.com/app/invoice?txnId={id}"
@@ -66,6 +67,41 @@ async def get_invoices(
         async with _qbo() as service:
             results = await service.get_invoices(customer_id, from_date, to_date)
         return [_fmt_invoice_summary(inv) for inv in results if _matches_status(inv, status)]
+    except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
+        return _format_error(exc)
+
+
+@invoices.tool(
+    name="create_invoice",
+    description=(
+        "Create a new invoice in QuickBooks for a customer. customer_id is QuickBooks' "
+        "internal Customer Id from search_customers; each line's item_id comes from "
+        "list_items. Per line: quantity (default 1), optional unit_price (omit to use the "
+        "item's catalog price), and optional description. Optional due_date (ISO YYYY-MM-DD) "
+        "and customer_memo. IMPORTANT: this WRITES to QuickBooks — before calling it, show "
+        "the user the customer, every line item, quantity, and price, and get explicit "
+        "confirmation. Returns the created invoice's id, doc_number, total, and a deep_link "
+        "to open it. On failure returns a human-readable error string."
+    ),
+    tags={"invoices", "write"},
+)
+async def create_invoice(
+    customer_id: str,
+    lines: list[LineInput],
+    due_date: str | None = None,
+    customer_memo: str | None = None,
+) -> dict[str, Any] | str:
+    """Create an invoice from confirmed line items (see decorator `description`)."""
+    try:
+        async with _qbo() as service:
+            invoice = await service.create_invoice(customer_id, lines, due_date, customer_memo)
+        invoice_id = invoice.get("Id", "")
+        return {
+            "id": invoice_id,
+            "doc_number": invoice.get("DocNumber"),
+            "total": invoice.get("TotalAmt"),
+            "deep_link": INVOICE_DEEP_LINK.format(id=invoice_id),
+        }
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)
 

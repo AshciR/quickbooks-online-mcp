@@ -105,3 +105,55 @@ class QBOService:
         sql += " ORDER BY TxnDate DESC MAXRESULTS 50"
         body = await self._client.query(sql)
         return body.get("QueryResponse", {}).get("Invoice", [])
+
+    async def create_invoice(
+        self,
+        customer_id: str,
+        lines: list[LineInput],
+        due_date: str | None = None,
+        customer_memo: str | None = None,
+    ) -> dict[str, Any]:
+        """Create an invoice for a customer and return the created QBO Invoice object.
+
+        `customer_id` must be numeric and `due_date`, if given, must be ISO. Lines are
+        turned into QBO `SalesItemLineDetail` entries by `_build_line_entry` (which fills
+        in catalog pricing). The create goes through `QBOClient.create`, which sends a
+        Request-Id idempotency header so a retry can't double-post the invoice.
+        """
+        validate_id(customer_id)
+        if due_date:
+            validate_date(due_date)
+        payload: dict[str, Any] = {
+            "Line": [await self._build_line_entry(line) for line in lines],
+            "CustomerRef": {"value": customer_id},
+        }
+        if due_date:
+            payload["DueDate"] = due_date
+        if customer_memo:
+            payload["CustomerMemo"] = {"value": customer_memo}
+        body = await self._client.create("invoice", payload)
+        return body.get("Invoice", {})
+
+    async def _build_line_entry(self, line: LineInput) -> dict[str, Any]:
+        """Turn one `LineInput` into a QBO SalesItemLineDetail line entry.
+
+        Validates the item id, and when `unit_price` is omitted reads the Item to use
+        its catalog `UnitPrice`, so `Amount` is always quantity * unit_price.
+        """
+        validate_id(line.item_id)
+        unit_price = line.unit_price
+        if unit_price is None:
+            item = await self._client.read("item", line.item_id)
+            unit_price = (item.get("Item") or {}).get("UnitPrice", 0)
+        entry: dict[str, Any] = {
+            "DetailType": "SalesItemLineDetail",
+            "Amount": line.quantity * unit_price,
+            "SalesItemLineDetail": {
+                "ItemRef": {"value": line.item_id},
+                "Qty": line.quantity,
+                "UnitPrice": unit_price,
+            },
+        }
+        if line.description:
+            entry["Description"] = line.description
+        return entry

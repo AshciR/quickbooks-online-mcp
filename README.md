@@ -1,19 +1,36 @@
 # QuickBooks Online MCP
 
-Foundation for a FastMCP server that exposes QuickBooks Online operations.
-This repository currently provides the auth + API client groundwork; the
-FastMCP server wiring will be layered on top in a later step.
+A FastMCP server that exposes QuickBooks Online operations (read invoices,
+look up customers/items, and create invoices) over streamable HTTP with static
+bearer-token auth.
 
 ## What's here
 
 - `src/qbo_mcp/config.py` — typed env-var settings.
 - `src/qbo_mcp/token_store.py` — Upstash Redis REST persistence for the
   OAuth token bundle.
-- `src/qbo_mcp/qbo_client.py` — async QBO API client with auto-refresh,
-  refresh-token rotation, retry-on-401, rate-limit + Fault handling, and
-  strict parameter validation.
+- `src/qbo_mcp/qbo_client.py` — async QBO API client (generic transport) with
+  auto-refresh, refresh-token rotation, retry-on-401, rate-limit + Fault
+  handling, and the id/date/escape validators.
+- `src/qbo_mcp/service.py` — `QBOService`, the business layer that builds
+  validated/escaped queries and invoice payloads on top of the client.
+- `src/qbo_mcp/server.py` — root FastMCP server (bearer auth + `/health`) that
+  `mount`s the per-entity tool sub-servers in `src/qbo_mcp/tools/`.
 - `scripts/bootstrap_oauth.py` — one-time OAuth flow.
 - `scripts/smoke_test.py` — verifies tokens + connectivity.
+
+## Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `search_customers(name)` | Find active customers by partial display name → `customer_id`. |
+| `list_items(name?)` | List active catalog items (Service/NonInventory/Inventory) → `item_id` + unit price. |
+| `get_invoices(customer_id, status?, from_date?, to_date?)` | A customer's invoices (status `all`/`open`/`paid`, optional ISO date range), newest first, with a one-line summary each. |
+| `get_invoice(doc_number)` | Full detail of one invoice by its human-facing document number, with a deep link. |
+| `create_invoice(customer_id, lines[], due_date?, customer_memo?)` | Create an invoice; each line's `unit_price` defaults to the item's catalog price. **Confirm details with the user first — this writes to QuickBooks.** |
+
+Workflow the docstrings teach the LLM: `search_customers` → `list_items` →
+confirm lines with the user → `create_invoice`.
 
 ## Prerequisites
 
@@ -73,6 +90,27 @@ uv run python scripts/smoke_test.py
 
 Expected output: `Company: <your sandbox company name>`.
 
+## 7. Run the MCP server
+
+```bash
+uv run python -m qbo_mcp.server   # serves on 0.0.0.0:$PORT (default 8080)
+```
+
+- MCP endpoint: `http://localhost:8080/mcp` (streamable HTTP), authenticated
+  with `Authorization: Bearer <MCP_BEARER_TOKEN>`.
+- Unauthenticated `GET /health` returns `ok` (for health checks).
+
+Connect from Claude Code:
+
+```bash
+claude mcp add --transport http qbo http://localhost:8080/mcp \
+  --header "Authorization: Bearer <MCP_BEARER_TOKEN>"
+```
+
+Or inspect it with the [MCP Inspector](https://github.com/modelcontextprotocol/inspector)
+(`npx @modelcontextprotocol/inspector`) → Transport "Streamable HTTP" → URL
+`http://localhost:8080/mcp` → header `Authorization: Bearer <MCP_BEARER_TOKEN>`.
+
 ## Tests
 
 ```bash
@@ -82,7 +120,8 @@ uv run pytest -q
 ## Project layout
 
 ```
-src/qbo_mcp/        # library code
+src/qbo_mcp/        # config, token_store, qbo_client, service, server
+src/qbo_mcp/tools/  # per-entity FastMCP sub-servers mounted by server.py
 scripts/            # bootstrap + smoke test
 tests/              # pytest suite (mocked httpx)
 ```
