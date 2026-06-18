@@ -7,6 +7,7 @@ persists the bundle to Upstash. Prints the realmId for .env.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import time
 import uuid
@@ -22,7 +23,11 @@ sys.path.insert(0, "src")
 from qbo_mcp.config import ENV_FILE, Settings  # noqa: E402
 from qbo_mcp.token_store import TokenBundle, TokenStore  # noqa: E402
 
-REDIRECT_URI = "http://localhost:8000/callback"
+# Production Intuit keys reject localhost/IP redirect URIs and require a public
+# HTTPS URL. Set OAUTH_REDIRECT_URI to your tunnel's https .../callback for prod;
+# it must match the URI registered in the Intuit app exactly. Defaults to the
+# localhost value that sandbox keys accept.
+REDIRECT_URI = os.environ.get("OAUTH_REDIRECT_URI", "http://localhost:8000/callback")
 AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 SCOPE = "com.intuit.quickbooks.accounting"
