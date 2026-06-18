@@ -1,12 +1,17 @@
+import os
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Which dotenv file to load. Defaults to .env; set ENV_FILE=.env.prod to point
+# the same code at a production company without editing .env.
+ENV_FILE = os.environ.get("ENV_FILE", ".env")
+
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     intuit_client_id: str = Field(alias="INTUIT_CLIENT_ID")
     intuit_client_secret: str = Field(alias="INTUIT_CLIENT_SECRET")

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from .config import Settings
 
-TOKEN_KEY = "qbo:tokens"
+TOKEN_KEY_PREFIX = "qbo:tokens"
 
 
 class TokenStore:
@@ -16,7 +16,7 @@ class TokenStore:
         self._http = http
 
     async def load(self) -> TokenBundle | None:
-        resp = await self._http.get(f"{self._base}/get/{TOKEN_KEY}", headers=self._headers)
+        resp = await self._http.get(f"{self._base}/get/{self._token_key}", headers=self._headers)
         resp.raise_for_status()
         data = resp.json()
         result = data.get("result")
@@ -27,10 +27,16 @@ class TokenStore:
     async def save(self, bundle: TokenBundle) -> None:
         value = quote(bundle.model_dump_json(), safe="")
         resp = await self._http.post(
-            f"{self._base}/set/{TOKEN_KEY}/{value}",
+            f"{self._base}/set/{self._token_key}/{value}",
             headers=self._headers,
         )
         resp.raise_for_status()
+
+    @property
+    def _token_key(self) -> str:
+        # Namespace the bundle per environment so sandbox and production tokens
+        # live under distinct Redis keys and never clobber each other.
+        return f"{TOKEN_KEY_PREFIX}:{self._settings.qbo_environment}"
 
     @property
     def _headers(self) -> dict[str, str]:

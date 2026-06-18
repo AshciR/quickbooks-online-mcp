@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, "src")
 
-from qbo_mcp.config import Settings  # noqa: E402
+from qbo_mcp.config import ENV_FILE, Settings  # noqa: E402
 from qbo_mcp.token_store import TokenBundle, TokenStore  # noqa: E402
 
 REDIRECT_URI = "http://localhost:8000/callback"
@@ -29,7 +29,7 @@ SCOPE = "com.intuit.quickbooks.accounting"
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv(ENV_FILE)
     settings = Settings()  # type: ignore[call-arg]
     state = uuid.uuid4().hex
     authorize_url = f"{AUTHORIZE_URL}?" + urlencode(

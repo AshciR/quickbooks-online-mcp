@@ -9,13 +9,13 @@ from dotenv import load_dotenv
 
 sys.path.insert(0, "src")
 
-from qbo_mcp.config import Settings  # noqa: E402
+from qbo_mcp.config import ENV_FILE, Settings  # noqa: E402
 from qbo_mcp.qbo_client import QBOAuthExpiredError, QBOClient  # noqa: E402
 from qbo_mcp.token_store import TokenStore  # noqa: E402
 
 
 def main() -> None:
-    load_dotenv()
+    load_dotenv(ENV_FILE)
     try:
         name = asyncio.run(_run())
     except QBOAuthExpiredError as exc:

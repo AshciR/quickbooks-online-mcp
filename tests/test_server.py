@@ -16,7 +16,7 @@ _BASE = r"https://sandbox-quickbooks\.api\.intuit\.com/v3/company/9999"
 QUERY_URL = re.compile(rf"{_BASE}/query\?.*")
 ITEM_READ_URL = re.compile(rf"{_BASE}/item/\d+\?.*")
 INVOICE_CREATE_URL = re.compile(rf"{_BASE}/invoice\?.*")
-UPSTASH_GET_URL = "https://upstash.test/get/qbo:tokens"
+UPSTASH_GET_URL = "https://upstash.test/get/qbo:tokens:sandbox"
 
 
 class TestInvoiceTools:
