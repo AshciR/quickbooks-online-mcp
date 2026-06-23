@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import re
 import time
+from types import SimpleNamespace
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import httpx
-from fastmcp import Client
+import pytest
+from fastmcp import Client, FastMCP
+from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from pytest_httpx import HTTPXMock
 
-from qbo_mcp.server import mcp
+from qbo_mcp.config import get_settings
+from qbo_mcp.server import build_auth, mcp
 from qbo_mcp.token_store import TokenBundle
 
 _BASE = r"https://sandbox-quickbooks\.api\.intuit\.com/v3/company/9999"
@@ -391,6 +395,50 @@ class TestItemTools:
             "Description": "Custom Design",
             "UnitPrice": 75,
         }
+
+
+class TestAuthMode:
+    async def test_oauth_mode_returns_no_auth(self) -> None:
+        # Given the bearer token is still present in the environment (conftest-seeded)
+        assert get_settings().mcp_bearer_token
+
+        # When the auth gate is built for oauth mode
+        auth = build_auth("oauth")
+
+        # Then there is no inbound gate (Horizon supplies OAuth) and the token is ignored,
+        # and a server constructs cleanly with auth=None
+        assert auth is None
+        assert FastMCP(name="quickbooks-online", auth=auth) is not None
+
+    async def test_bearer_mode_returns_static_token_verifier(self) -> None:
+        # Given the conftest-seeded MCP_BEARER_TOKEN
+
+        # When the auth gate is built for bearer mode
+        auth = build_auth("bearer")
+
+        # Then the existing static-bearer gate is returned, unchanged
+        assert isinstance(auth, StaticTokenVerifier)
+
+    async def test_bearer_mode_missing_token_raises_actionable_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Given bearer mode is requested but settings carry no MCP_BEARER_TOKEN.
+        # (Patch the settings the server reads — a real .env supplies the token, so
+        # clearing the env var alone wouldn't make it absent.)
+        monkeypatch.setattr(
+            "qbo_mcp.server.get_settings", lambda: SimpleNamespace(mcp_bearer_token=None)
+        )
+
+        # When the auth gate is built for bearer mode
+        # Then it fails fast with a clear, actionable message naming the missing var
+        with pytest.raises(RuntimeError, match="MCP_BEARER_TOKEN"):
+            build_auth("bearer")
+
+    async def test_unknown_mode_raises(self) -> None:
+        # Given: no preconditions
+
+        # When the auth gate is built for an unrecognized mode
+        # Then it fails closed rather than silently running unauthenticated
+        with pytest.raises(RuntimeError, match="Unknown MCP_AUTH_MODE"):
+            build_auth("foo")
 
 
 async def test_health_route_returns_ok_unauthenticated() -> None:

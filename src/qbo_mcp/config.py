@@ -19,7 +19,9 @@ class Settings(BaseSettings):
     qbo_environment: Literal["sandbox", "production"] = Field(alias="QBO_ENVIRONMENT")
     upstash_redis_rest_url: str = Field(alias="UPSTASH_REDIS_REST_URL")
     upstash_redis_rest_token: str = Field(alias="UPSTASH_REDIS_REST_TOKEN")
-    mcp_bearer_token: str = Field(alias="MCP_BEARER_TOKEN")
+    # Optional so the server can boot in OAuth mode (MCP_AUTH_MODE=oauth) without it.
+    # When MCP_AUTH_MODE=bearer, server._build_auth() fails fast if it's missing.
+    mcp_bearer_token: str | None = Field(default=None, alias="MCP_BEARER_TOKEN")
 
     @property
     def qbo_base_url(self) -> str:

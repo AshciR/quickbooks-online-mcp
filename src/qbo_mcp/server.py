@@ -1,8 +1,11 @@
 """FastMCP server exposing QuickBooks Online tools over streamable HTTP.
 
-Runs on `0.0.0.0:$PORT` (default 8080). MCP clients authenticate with a static
-bearer token (`MCP_BEARER_TOKEN`) via `Authorization: Bearer <token>`. A plain,
-unauthenticated `GET /health` route returns ``ok`` for Render health checks.
+Runs on `0.0.0.0:$PORT` (default 8080). Inbound (client → server) auth is selected
+by `MCP_AUTH_MODE` (default ``bearer``): in ``bearer`` mode clients authenticate with
+a static bearer token (`MCP_BEARER_TOKEN`) via `Authorization: Bearer <token>` (Render);
+in ``oauth`` mode the server runs with no auth of its own and the hosting platform
+(Prefect Horizon) supplies the OAuth gate. A plain, unauthenticated `GET /health` route
+returns ``ok`` for Render health checks.
 
 The tools live in per-entity sub-servers under `qbo_mcp.tools` (the FastMCP analog
 of FastAPI routers) and are `mount`ed here with no namespace, so their names stay
@@ -44,12 +47,30 @@ from .tools.items import items
 
 DEFAULT_PORT = 8080
 
-mcp = FastMCP(
-    name="quickbooks-online",
-    auth=StaticTokenVerifier(
-        tokens={get_settings().mcp_bearer_token: {"client_id": "qbo-mcp", "scopes": []}}
-    ),
-)
+
+def build_auth(mode: str) -> StaticTokenVerifier | None:
+    """Pick the inbound auth gate for the given MCP_AUTH_MODE.
+
+    bearer → StaticTokenVerifier over MCP_BEARER_TOKEN (Render).
+    oauth  → None; the platform (Prefect Horizon) supplies the OAuth gate.
+
+    Unknown modes raise rather than falling through to ``None`` — fail closed so a
+    typo can't silently run the server unauthenticated.
+    """
+    if mode == "oauth":
+        return None
+    if mode != "bearer":
+        raise RuntimeError(f"Unknown MCP_AUTH_MODE={mode!r}; expected 'bearer' or 'oauth'.")
+    token = get_settings().mcp_bearer_token
+    if not token:
+        raise RuntimeError(
+            "MCP_AUTH_MODE=bearer requires MCP_BEARER_TOKEN to be set. "
+            "Set it, or use MCP_AUTH_MODE=oauth for platform OAuth (Prefect Horizon)."
+        )
+    return StaticTokenVerifier(tokens={token: {"client_id": "qbo-mcp", "scopes": []}})
+
+
+mcp = FastMCP(name="quickbooks-online", auth=build_auth(os.environ.get("MCP_AUTH_MODE", "bearer")))
 
 # Mount the per-entity tool sub-servers with no namespace (tool names stay unprefixed).
 # The root server's bearer auth governs every mounted tool.
