@@ -24,7 +24,8 @@ invoices = FastMCP(name="invoices")
         "Retrieve the full detail of a single QuickBooks invoice by its human-facing "
         "document number (e.g. \"1010\" printed on the invoice) — NOT QuickBooks' internal "
         "Id. Returns the header fields, every line item (description, quantity, unit price, "
-        "amount), the subtotal/total/balance, the email-delivery status, and a deep_link "
+        "amount), the subtotal/tax/total/balance (subtotal + tax == total; tax is "
+        "TxnTaxDetail.TotalTax, 0 when untaxed), the email-delivery status, and a deep_link "
         "that opens the invoice in the QuickBooks web app. If no invoice carries that "
         "document number, returns a message saying so. On failure returns a human-readable "
         "error string."
@@ -50,7 +51,7 @@ async def get_invoice(doc_number: str) -> dict[str, Any] | str:
         "QuickBooks' internal Customer Id — get it from search_customers, not a name. "
         "Optional status filters to 'open' (balance still owed) or 'paid' (fully paid); "
         "default 'all'. Optional from_date/to_date (ISO YYYY-MM-DD) bound the invoice date "
-        "inclusively. Each result has doc_number, id, txn_date, due_date, total, balance, "
+        "inclusively. Each result has doc_number, id, txn_date, due_date, total, tax, balance, "
         "and a one-line summary of its line items; call get_invoice with a doc_number for "
         "full detail. On failure returns a human-readable error string."
     ),
@@ -183,6 +184,7 @@ def _fmt_invoice(inv: dict[str, Any]) -> dict[str, Any]:
         "lines": lines,
         "subtotal": subtotal,
         "discount": discount,
+        "tax": _total_tax(inv),
         "total": inv.get("TotalAmt"),
         "balance": inv.get("Balance"),
         "email_status": inv.get("EmailStatus"),
@@ -203,6 +205,7 @@ def _fmt_invoice_summary(inv: dict[str, Any]) -> dict[str, Any]:
         "txn_date": inv.get("TxnDate"),
         "due_date": inv.get("DueDate"),
         "total": inv.get("TotalAmt"),
+        "tax": _total_tax(inv),
         "balance": inv.get("Balance"),
         "summary": "; ".join(descriptions),
     }
@@ -221,6 +224,15 @@ def _line_descriptions(inv: dict[str, Any]) -> list[str]:
             if desc:
                 out.append(desc)
     return out
+
+
+def _total_tax(inv: dict[str, Any]) -> float:
+    """TxnTaxDetail.TotalTax, or 0 when the invoice carries no tax.
+
+    Sales tax lives outside the `Line` array, so the sum of line `amount`s is the
+    pre-tax subtotal; exposing this lets a consumer reconcile subtotal + tax == total.
+    """
+    return (inv.get("TxnTaxDetail") or {}).get("TotalTax") or 0
 
 
 def _matches_status(inv: dict[str, Any], status: Literal["all", "open", "paid"]) -> bool:

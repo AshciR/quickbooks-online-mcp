@@ -63,7 +63,21 @@ class TestInvoiceTools:
         # subtotal/discount come straight from QBO's own lines, total from TotalAmt
         assert result["subtotal"] == 387.5  # SubTotalLineDetail.Amount, not a re-sum
         assert result["discount"] == 38.75  # DiscountLineDetail.Amount
-        assert result["total"] == 348.75  # 387.5 - 38.75
+        assert result["tax"] == 31.25  # TxnTaxDetail.TotalTax
+        assert result["total"] == 380.0  # 387.5 - 38.75 + 31.25
+
+    async def test_get_invoice_without_tax_reports_zero(self, httpx_mock: HTTPXMock) -> None:
+        # Given a fresh token and QBO returning an invoice that carries no TxnTaxDetail
+        _mock_token(httpx_mock)
+        invoice = self._invoice_fixture()
+        del invoice["TxnTaxDetail"]
+        httpx_mock.add_response(url=QUERY_URL, json={"QueryResponse": {"Invoice": [invoice]}})
+
+        # When get_invoice is called for that document number
+        result = await _call_tool("get_invoice", {"doc_number": "1037"})
+
+        # Then tax is reported as 0 (numeric), not null or a missing key
+        assert result["tax"] == 0
 
     async def test_get_invoice_not_found_returns_message(self, httpx_mock: HTTPXMock) -> None:
         # Given a fresh token and QBO returning no invoices for the DocNumber query
@@ -100,6 +114,9 @@ class TestInvoiceTools:
         assert [r["doc_number"] for r in result] == ["1021", "1001"]
         assert result[0]["summary"] == "Rock Fountain; Pump"
         assert result[1]["summary"] == "Weekly Gardening Service"
+        # Tax (TxnTaxDetail.TotalTax) is surfaced; an untaxed invoice reports 0, not null
+        assert result[0]["tax"] == 25.0
+        assert result[1]["tax"] == 0
 
     async def test_get_invoices_status_open_filters_on_balance(self, httpx_mock: HTTPXMock) -> None:
         # Given a fresh token and QBO returning one open (balance>0) and one paid (balance=0) invoice
@@ -190,8 +207,9 @@ class TestInvoiceTools:
                 "DocNumber": "1021",
                 "TxnDate": "2026-04-25",
                 "DueDate": "2026-05-25",
-                "TotalAmt": 459.0,
+                "TotalAmt": 484.0,
                 "Balance": 239.0,
+                "TxnTaxDetail": {"TotalTax": 25.0, "TxnTaxCodeRef": {"value": "2"}},
                 "Line": [
                     {"DetailType": "SalesItemLineDetail", "Description": "Rock Fountain", "Amount": 275.0},
                     {"DetailType": "SalesItemLineDetail", "Description": "Pump", "Amount": 184.0},
@@ -220,9 +238,10 @@ class TestInvoiceTools:
             "TxnDate": "2026-06-01",
             "DueDate": "2026-07-01",
             "CustomerRef": {"value": "58", "name": "Amy's Bird Sanctuary"},
-            "TotalAmt": 348.75,
-            "Balance": 348.75,
+            "TotalAmt": 380.0,
+            "Balance": 380.0,
             "EmailStatus": "NotSet",
+            "TxnTaxDetail": {"TotalTax": 31.25, "TxnTaxCodeRef": {"value": "2"}},
             "Line": [
                 {
                     "DetailType": "SalesItemLineDetail",
