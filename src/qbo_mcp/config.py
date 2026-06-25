@@ -19,7 +19,15 @@ class Settings(BaseSettings):
     qbo_environment: Literal["sandbox", "production"] = Field(alias="QBO_ENVIRONMENT")
     upstash_redis_rest_url: str = Field(alias="UPSTASH_REDIS_REST_URL")
     upstash_redis_rest_token: str = Field(alias="UPSTASH_REDIS_REST_TOKEN")
-    mcp_bearer_token: str = Field(alias="MCP_BEARER_TOKEN")
+
+    # Inbound MCP-client auth. "bearer" gates with a shared static token (local dev,
+    # header-capable clients); "oauth" runs a WorkOS AuthKit provider (Claude Desktop,
+    # which only speaks OAuth). The three fields below are each required only in their
+    # mode — build_auth() fails fast if the active mode's config is missing.
+    mcp_auth_mode: Literal["bearer", "oauth"] = Field(default="bearer", alias="MCP_AUTH_MODE")
+    mcp_bearer_token: str | None = Field(default=None, alias="MCP_BEARER_TOKEN")
+    authkit_domain: str | None = Field(default=None, alias="AUTHKIT_DOMAIN")
+    mcp_server_base_url: str | None = Field(default=None, alias="MCP_SERVER_BASE_URL")
 
     @property
     def qbo_base_url(self) -> str:
