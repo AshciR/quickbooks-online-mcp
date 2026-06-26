@@ -1,0 +1,31 @@
+# Keep the build context small and prevent secrets/dotenv from ever entering the image.
+
+# Secrets / local config — never copy any dotenv (including .env.example).
+.env
+.env.*
+
+# VCS / editors / tooling
+.git
+.gitignore
+.idea
+.claude
+.github
+
+# Python virtualenv & caches
+.venv
+__pycache__/
+*.py[oc]
+.pytest_cache/
+build/
+dist/
+wheels/
+*.egg-info
+
+# Not needed at runtime
+tests/
+docs/
+scripts/
+
+# Markdown — but README.md is needed by hatchling at build time.
+*.md
+!README.md
