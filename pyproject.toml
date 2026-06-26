@@ -26,6 +26,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/qbo_mcp"]
 
+# Ship the connector logo so importlib.resources finds it at runtime, regardless of
+# VCS tracking state (server.py reads qbo_mcp/assets/icon.png at import).
+[tool.hatch.build.targets.wheel.force-include]
+"src/qbo_mcp/assets/icon.png" = "qbo_mcp/assets/icon.png"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 pythonpath = ["src"]
