@@ -8,7 +8,7 @@ from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.auth.providers.workos import AuthKitProvider
 
 from qbo_mcp.config import Settings, get_settings
-from qbo_mcp.server import build_auth, mcp
+from qbo_mcp.server import build_auth, build_icons, mcp
 
 
 class TestBuildAuth:
@@ -75,6 +75,45 @@ async def test_health_route_returns_ok_unauthenticated() -> None:
     # Then it responds 200 with a plain "ok" body
     assert resp.status_code == 200
     assert resp.text == "ok"
+
+
+async def test_icon_route_returns_png_unauthenticated() -> None:
+    # Given the server's ASGI app and no Authorization header
+    transport = httpx.ASGITransport(app=mcp.http_app())
+
+    # When GET /icon.png is requested
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/icon.png")
+
+    # Then it responds 200 with image/png bytes (a PNG magic-number header)
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+class TestBuildIcons:
+    def test_advertises_absolute_icon_url_when_base_url_set(self) -> None:
+        # Given a public base URL (oauth mode, #9)
+        settings = _auth_settings(mcp_server_base_url="https://app.onrender.com")
+
+        # When the advertised icons are built
+        icons = build_icons(settings)
+
+        # Then a single icon points at the absolute /icon.png URL
+        assert icons is not None
+        assert len(icons) == 1
+        assert str(icons[0].src) == "https://app.onrender.com/icon.png"
+        assert icons[0].mimeType == "image/png"
+
+    def test_advertises_nothing_without_base_url(self) -> None:
+        # Given no public base URL (bearer mode default)
+        settings = _auth_settings(mcp_server_base_url=None)
+
+        # When the advertised icons are built
+        icons = build_icons(settings)
+
+        # Then nothing is advertised, so the server still boots in bearer mode
+        assert icons is None
 
 
 # --- helpers and fixtures --------------------------------------------------

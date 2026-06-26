@@ -31,14 +31,16 @@ Or wire it into Claude Code::
 """
 from __future__ import annotations
 
+import importlib.resources
 import os
 
 from fastmcp import FastMCP
 from fastmcp.server.auth import AuthProvider
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier
 from fastmcp.server.auth.providers.workos import AuthKitProvider
+from mcp.types import Icon
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, Response
 
 from .config import Settings, get_settings
 from .customers.tools import customers
@@ -46,6 +48,12 @@ from .invoices.tools import invoices
 from .items.tools import items
 
 DEFAULT_PORT = 8080
+
+# The connector logo, advertised to MCP clients and served over /icon.png. Packaged
+# under qbo_mcp/assets so importlib.resources finds it at runtime (see pyproject
+# force-include). 512x512 RGBA PNG.
+ICON_BYTES = (importlib.resources.files("qbo_mcp") / "assets" / "icon.png").read_bytes()
+ICON_SIZES = ["512x512"]
 
 
 def build_auth(settings: Settings) -> AuthProvider:
@@ -74,7 +82,33 @@ def build_auth(settings: Settings) -> AuthProvider:
     )
 
 
-mcp = FastMCP(name="quickbooks-online", auth=build_auth(get_settings()))
+def build_icons(settings: Settings) -> list[Icon] | None:
+    """Advertise the connector logo as an absolute URL, or `None` when unavailable.
+
+    The advertised `src` must be an absolute URL the client can fetch, so it's only
+    well-formed when `mcp_server_base_url` is set (oauth mode today; #9). In bearer
+    mode that's typically unset, so we advertise no icon — the `/icon.png` route is
+    still served, it just isn't pointed at from the `initialize` response. Returning
+    `None` keeps bearer mode booting without `mcp_server_base_url`.
+    """
+    if not settings.mcp_server_base_url:
+        return None
+    return [
+        Icon(
+            src=f"{settings.mcp_server_base_url}/icon.png",
+            mimeType="image/png",
+            sizes=ICON_SIZES,
+        )
+    ]
+
+
+_settings = get_settings()
+mcp = FastMCP(
+    name="quickbooks-online",
+    auth=build_auth(_settings),
+    icons=build_icons(_settings),
+    website_url=_settings.mcp_server_base_url,
+)
 
 # Mount the per-entity tool sub-servers with no namespace (tool names stay unprefixed).
 # The root server's bearer auth governs every mounted tool.
@@ -87,6 +121,14 @@ mcp.mount(items)
 async def health(request: Request) -> PlainTextResponse:
     """Unauthenticated liveness probe for Render. Returns 200 ``ok``."""
     return PlainTextResponse("ok")
+
+
+@mcp.custom_route("/icon.png", methods=["GET"])
+async def icon(request: Request) -> Response:
+    """Unauthenticated connector logo (like `/health`). The URL advertised in the
+    `initialize` response's `serverInfo.icons` points here so MCP clients (e.g.
+    Claude Desktop) can fetch it without a token."""
+    return Response(ICON_BYTES, media_type="image/png")
 
 
 def main() -> None:
