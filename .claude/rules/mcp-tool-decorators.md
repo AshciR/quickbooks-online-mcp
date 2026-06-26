@@ -1,6 +1,7 @@
 # MCP tools: explicit `@mcp.tool(...)` decorator arguments
 
-Every FastMCP tool in `src/qbo_mcp/server.py` MUST be registered with **explicit
+Every FastMCP tool in `src/qbo_mcp/<entity>/tools.py` (the per-domain sub-servers
+mounted by `src/qbo_mcp/server.py`) MUST be registered with **explicit
 decorator arguments** — never the bare `@mcp.tool` form. Pass, at minimum, an
 explicit `name`, `description`, and `tags`; add `meta` where useful.
 

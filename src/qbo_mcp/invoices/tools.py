@@ -10,8 +10,8 @@ from typing import Any, Literal
 
 from fastmcp import FastMCP
 
-from ..service import LineInput
-from .shared import _format_error, _qbo
+from ..shared import _format_error, _qbo
+from .service import InvoiceService, LineInput
 
 INVOICE_DEEP_LINK = "https://app.qbo.intuit.com/app/invoice?txnId={id}"
 
@@ -35,8 +35,8 @@ invoices = FastMCP(name="invoices")
 async def get_invoice(doc_number: str) -> dict[str, Any] | str:
     """Read one invoice by its human-facing DocNumber (see decorator `description`)."""
     try:
-        async with _qbo() as service:
-            invoice = await service.find_invoice_by_doc_number(doc_number)
+        async with _qbo() as client:
+            invoice = await InvoiceService(client).find_invoice_by_doc_number(doc_number)
         if invoice is None:
             return f"No invoice found with document number {doc_number!r}."
         return _fmt_invoice(invoice)
@@ -65,8 +65,8 @@ async def get_invoices(
 ) -> list[dict[str, Any]] | str:
     """List a customer's invoices with optional status/date filters (see decorator `description`)."""
     try:
-        async with _qbo() as service:
-            results = await service.get_invoices(customer_id, from_date, to_date)
+        async with _qbo() as client:
+            results = await InvoiceService(client).get_invoices(customer_id, from_date, to_date)
         return [_fmt_invoice_summary(inv) for inv in results if _matches_status(inv, status)]
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)
@@ -94,8 +94,10 @@ async def create_invoice(
 ) -> dict[str, Any] | str:
     """Create an invoice from confirmed line items (see decorator `description`)."""
     try:
-        async with _qbo() as service:
-            invoice = await service.create_invoice(customer_id, lines, due_date, customer_memo)
+        async with _qbo() as client:
+            invoice = await InvoiceService(client).create_invoice(
+                customer_id, lines, due_date, customer_memo
+            )
         invoice_id = invoice.get("Id", "")
         return {
             "id": invoice_id,

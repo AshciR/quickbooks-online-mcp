@@ -4,10 +4,11 @@ Runs on `0.0.0.0:$PORT` (default 8080). MCP clients authenticate with a static
 bearer token (`MCP_BEARER_TOKEN`) via `Authorization: Bearer <token>`. A plain,
 unauthenticated `GET /health` route returns ``ok`` for Render health checks.
 
-The tools live in per-entity sub-servers under `qbo_mcp.tools` (the FastMCP analog
-of FastAPI routers) and are `mount`ed here with no namespace, so their names stay
-unprefixed (`get_invoice`, `search_customers`, …). The root server owns auth,
-`/health`, and the process entrypoint.
+The tools live in per-entity packages under `qbo_mcp` (`customers`, `invoices`,
+`items`), each pairing its `tools.py` sub-server (the FastMCP analog of a FastAPI
+router) with its `service.py`. The sub-servers are `mount`ed here with no namespace,
+so their names stay unprefixed (`get_invoice`, `search_customers`, …). The root
+server owns auth, `/health`, and the process entrypoint.
 
 Local testing
 -------------
@@ -40,9 +41,9 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 from .config import Settings, get_settings
-from .tools.customers import customers
-from .tools.invoices import invoices
-from .tools.items import items
+from .customers.tools import customers
+from .invoices.tools import invoices
+from .items.tools import items
 
 DEFAULT_PORT = 8080
 

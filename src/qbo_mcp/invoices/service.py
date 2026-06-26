@@ -1,9 +1,9 @@
-"""Business-level QuickBooks Online operations.
+"""Business-level QuickBooks Online invoice operations.
 
-`QBOService` turns the generic transport primitives on `QBOClient` (`read`,
-`create`, `query`) into typed, entity-aware operations — the layer the MCP
-tools call. Keeping it separate from `QBOClient` keeps HTTP/auth/retry concerns
-out of the domain logic and the domain logic out of the transport.
+`InvoiceService` turns the generic transport primitives on `QBOClient` (`read`,
+`create`, `query`) into typed, entity-aware invoice operations — the layer the
+invoice MCP tools call. Keeping it separate from `QBOClient` keeps HTTP/auth/retry
+concerns out of the domain logic and the domain logic out of the transport.
 
 `QBOClient.query` takes raw QBO SQL, so the contract lives here: any method that
 takes an id, a date, or free text MUST validate/escape it before it reaches the
@@ -16,7 +16,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from .qbo_client import QBOClient, escape_qbo_string, validate_date, validate_id
+from ..qbo_client import QBOClient, escape_qbo_string, validate_date, validate_id
 
 
 class LineInput(BaseModel):
@@ -32,7 +32,7 @@ class LineInput(BaseModel):
     description: str | None = None
 
 
-class QBOService:
+class InvoiceService:
     def __init__(self, client: QBOClient) -> None:
         self._client = client
 
@@ -48,37 +48,6 @@ class QBOService:
         body = await self._client.query(sql)
         invoices = body.get("QueryResponse", {}).get("Invoice", [])
         return invoices[0] if invoices else None
-
-    async def search_customers(self, name: str) -> list[dict[str, Any]]:
-        """Find active customers whose DisplayName contains `name` (escaped, case-insensitive).
-
-        Returns up to 20 raw QBO Customer objects; the tool layer trims them to the
-        fields it surfaces. `name` is free text, so it is escaped before reaching SQL.
-        """
-        escaped = escape_qbo_string(name)
-        sql = (
-            f"SELECT * FROM Customer WHERE DisplayName LIKE '%{escaped}%' "
-            "AND Active = true MAXRESULTS 20"
-        )
-        body = await self._client.query(sql)
-        return body.get("QueryResponse", {}).get("Customer", [])
-
-    async def list_items(self, name: str | None = None) -> list[dict[str, Any]]:
-        """List active sellable items (Service / NonInventory / Inventory).
-
-        These are the catalog entries an invoice line references by Id. An optional
-        `name` substring narrows the list (escaped before reaching SQL). Returns raw
-        QBO Item objects; the tool layer trims them.
-        """
-        sql = (
-            "SELECT * FROM Item WHERE Type IN ('Service', 'NonInventory', 'Inventory') "
-            "AND Active = true"
-        )
-        if name:
-            sql += f" AND Name LIKE '%{escape_qbo_string(name)}%'"
-        sql += " MAXRESULTS 100"
-        body = await self._client.query(sql)
-        return body.get("QueryResponse", {}).get("Item", [])
 
     async def get_invoices(
         self,

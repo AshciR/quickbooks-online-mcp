@@ -1,11 +1,12 @@
-"""Item-catalog tools, mounted onto the root server (see `invoices.py` for the pattern)."""
+"""Item-catalog tools, mounted onto the root server (see `invoices/tools.py` for the pattern)."""
 from __future__ import annotations
 
 from typing import Any
 
 from fastmcp import FastMCP
 
-from .shared import _format_error, _qbo
+from ..shared import _format_error, _qbo
+from .service import ItemService
 
 items = FastMCP(name="items")
 
@@ -25,8 +26,8 @@ items = FastMCP(name="items")
 async def list_items(name: str | None = None) -> list[dict[str, Any]] | str:
     """List active sellable catalog items, optional name filter (see decorator `description`)."""
     try:
-        async with _qbo() as service:
-            results = await service.list_items(name)
+        async with _qbo() as client:
+            results = await ItemService(client).list_items(name)
         return [_fmt_item(i) for i in results]
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)

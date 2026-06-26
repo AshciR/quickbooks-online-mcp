@@ -48,8 +48,9 @@ class QBOClient:
 
         This is a generic transport primitive: it does no validation or escaping.
         Callers building SQL from user input must validate ids/dates and escape
-        free text first — that responsibility lives in `QBOService`, whose typed
-        methods are the only thing MCP tools should call (never `query` directly).
+        free text first — that responsibility lives in the per-domain service
+        classes (`<entity>/service.py`), whose typed methods are the only thing
+        MCP tools should call (never `query` directly).
         """
         return await self._request(
             "GET", self._company_path("/query"), params={"query": sql}
