@@ -1,11 +1,12 @@
-"""Customer tools, mounted onto the root server (see `invoices.py` for the pattern)."""
+"""Customer tools, mounted onto the root server (see `invoices/tools.py` for the pattern)."""
 from __future__ import annotations
 
 from typing import Any
 
 from fastmcp import FastMCP
 
-from .shared import _format_error, _qbo
+from ..shared import _format_error, _qbo
+from .service import CustomerService
 
 customers = FastMCP(name="customers")
 
@@ -26,8 +27,8 @@ customers = FastMCP(name="customers")
 async def search_customers(name: str) -> list[dict[str, Any]] | str:
     """Find active customers by partial display name (see decorator `description`)."""
     try:
-        async with _qbo() as service:
-            results = await service.search_customers(name)
+        async with _qbo() as client:
+            results = await CustomerService(client).search_customers(name)
         return [_fmt_customer(c) for c in results]
     except Exception as exc:  # noqa: BLE001 — tools must never leak tracebacks
         return _format_error(exc)

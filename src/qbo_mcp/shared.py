@@ -1,8 +1,10 @@
-"""Shared plumbing for the mounted tool sub-servers.
+"""Shared plumbing for the per-domain tool sub-servers.
 
-Every per-entity tool module (`invoices`, `customers`, `items`) builds a
-`QBOService` the same way and turns QBO exceptions into readable strings the same
-way. Those two concerns live here so the tool modules only hold entity logic.
+Every per-entity tool module (`customers`, `invoices`, `items`) builds a
+`QBOClient` the same way and turns QBO exceptions into readable strings the same
+way. Those two concerns live here so the domain packages only hold entity logic;
+each one wraps the yielded client in its own domain service (`CustomerService`,
+`InvoiceService`, `ItemService`).
 """
 from __future__ import annotations
 
@@ -11,27 +13,27 @@ from typing import AsyncIterator
 
 import httpx
 
-from ..config import get_settings
-from ..qbo_client import (
+from .config import get_settings
+from .qbo_client import (
     QBOAuthExpiredError,
     QBOClient,
     QBOFaultError,
     QBORateLimitError,
 )
-from ..service import QBOService
-from ..token_store import TokenStore
+from .token_store import TokenStore
 
 
 @contextlib.asynccontextmanager
-async def _qbo() -> AsyncIterator[QBOService]:
-    """Yield a QBOService over a QBOClient backed by a fresh httpx client.
+async def _qbo() -> AsyncIterator[QBOClient]:
+    """Yield a QBOClient backed by a fresh httpx client.
 
-    Mirrors smoke_test.py's wiring; the service is the seam every tool calls.
+    Mirrors smoke_test.py's wiring; each tool wraps this client in its domain
+    service (e.g. `CustomerService(client)`), the seam every tool calls.
     """
     settings = get_settings()
     async with httpx.AsyncClient(timeout=30.0) as http:
         store = TokenStore(settings, http)
-        yield QBOService(QBOClient(settings, store, http))
+        yield QBOClient(settings, store, http)
 
 
 def _format_error(exc: Exception) -> str:
