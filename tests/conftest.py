@@ -14,11 +14,18 @@ from typing import Any, AsyncGenerator  # noqa: E402
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
+from fastmcp import Client  # noqa: E402
 from httpx import AsyncClient  # noqa: E402
+from pytest_httpx import HTTPXMock  # noqa: E402
 
 from qbo_mcp.config import Settings  # noqa: E402
 from qbo_mcp.qbo_client import QBOClient  # noqa: E402
+from qbo_mcp.server import mcp  # noqa: E402
 from qbo_mcp.token_store import TokenBundle, TokenStore  # noqa: E402
+
+# Upstash GET for the sandbox token bundle — the HTTP boundary the in-memory tool
+# tests mock (a fresh bundle, or `{"result": None}` to simulate un-bootstrapped auth).
+UPSTASH_GET_URL = "https://upstash.test/get/qbo:tokens:sandbox"
 
 
 @pytest.fixture
@@ -68,3 +75,34 @@ def _store(http: httpx.AsyncClient) -> InMemoryTokenStore:
         access_expires_at=int(time.time()) + 3600,
     )
     return InMemoryTokenStore(bundle, _settings(), http)
+
+
+# --- in-memory FastMCP tool helpers (shared by the per-domain test_tool.py files) ---
+#
+# These drive tools through FastMCP's in-memory client. The Client MUST be opened
+# inside each call (never a fixture) — opening it in a fixture causes event-loop
+# errors — so these stay plain importable functions, not fixtures.
+
+
+def _client() -> Client:
+    # The in-memory FastMCPTransport bypasses the server's bearer auth (and rejects
+    # an `auth=` arg) — bearer enforcement only applies over the HTTP transport.
+    return Client(mcp)
+
+
+async def _call_tool(name: str, args: dict[str, Any]) -> Any:
+    async with _client() as client:
+        result = await client.call_tool(name, args)
+    return result.data
+
+
+def _mock_token(httpx_mock: HTTPXMock, times: int = 1) -> None:
+    # Each QBO request loads the token, so a tool that makes N QBO calls (e.g.
+    # create_invoice does an Item read + the create) needs N single-use responses.
+    bundle = TokenBundle(
+        access_token="access-1",
+        refresh_token="refresh-1",
+        access_expires_at=int(time.time()) + 3600,
+    )
+    for _ in range(times):
+        httpx_mock.add_response(url=UPSTASH_GET_URL, json={"result": bundle.model_dump_json()})
