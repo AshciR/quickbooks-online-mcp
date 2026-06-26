@@ -1,20 +1,43 @@
-# Starter image-build workflow — builds the container and pushes it to GHCR.
-# This is a starting point the operator (repo owner) is expected to tune: adjust the
-# triggers, tags, and any registry/auth specifics to taste. By default it pushes on
-# commits to main and on manual dispatch, tagging :latest plus a short-SHA tag.
+# CI: run the test suite on every push/PR, then build and publish the container image.
+#
+# The `docker` job is gated two ways: `needs: test` makes it wait for (and require) a green
+# test run, and the branch `if` restricts publishing to main. So PRs run tests only, a
+# failing test run never produces an image, and pushes to main publish :latest + a
+# short-SHA tag to GHCR. The image build/push is a starter the operator tunes (tags,
+# registry/auth).
 
-name: docker-image
+name: ci
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 env:
   IMAGE: ghcr.io/ashcir/quickbooks-online-mcp
 
 jobs:
-  build-and-push:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Run tests
+        run: uv run pytest -v
+
+  docker:
+    needs: test
+    if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
