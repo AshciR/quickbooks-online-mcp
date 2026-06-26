@@ -111,6 +111,38 @@ Or inspect it with the [MCP Inspector](https://github.com/modelcontextprotocol/i
 (`npx @modelcontextprotocol/inspector`) → Transport "Streamable HTTP" → URL
 `http://localhost:8080/mcp` → header `Authorization: Bearer <MCP_BEARER_TOKEN>`.
 
+## Docker / Render deployment
+
+The server ships as a container (self-hosted as a Docker image on Render). The image is a
+multi-stage `uv` build on `python:3.12-slim`, runs as a non-root user, and bakes in **no**
+config — every secret/setting is supplied at runtime via env vars (the same ones listed in
+`.env.example`). It honors `$PORT` (Render injects it; defaults to 8080) and serves the
+unauthenticated `GET /health` route for Render's health probe.
+
+Build the image:
+
+```bash
+docker build -t quickbooks-online-mcp .
+```
+
+Run locally with Docker Compose, mirroring the Render runtime — config comes from a local
+env file (never committed):
+
+```bash
+docker compose up --build                       # bearer mode (reads .env)
+ENV_FILE=.env.oauth docker compose up --build   # oauth mode
+PORT=9090 docker compose up --build             # custom port, as Render injects $PORT
+```
+
+Then `GET /health` and the `/mcp` endpoint are served on `$PORT` exactly as the `uv run`
+path above (e.g. `curl localhost:8080/health` → `ok`; connect an MCP client to
+`http://localhost:8080/mcp`).
+
+CI builds and publishes the image to GitHub Container Registry at
+`ghcr.io/ashcir/quickbooks-online-mcp` (tagged `:latest` plus a `sha-<commit>` tag). On
+Render, deploy from that image and enter the runtime env vars (auth mode + QBO/Upstash
+credentials) as encrypted dashboard settings — no `.env*` is part of the image.
+
 ## Tests
 
 ```bash

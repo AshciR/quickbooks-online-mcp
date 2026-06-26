@@ -1,0 +1,27 @@
+# Local container run that mirrors the Render runtime: build the image, supply config
+# from a local env file (never committed), and probe /health. Defaults to bearer mode
+# (.env); select another file with ENV_FILE, e.g. .env.oauth for oauth mode.
+#
+#   docker compose up --build                       # bearer (.env)
+#   ENV_FILE=.env.oauth docker compose up --build   # oauth
+#   PORT=9090 docker compose up --build             # honor a custom port, as Render injects $PORT
+
+services:
+  server:
+    build: .
+    image: quickbooks-online-mcp
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      PORT: ${PORT:-8080}
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get("PORT",8080)}/health').status==200 else 1)
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
