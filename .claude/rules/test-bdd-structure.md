@@ -33,9 +33,13 @@ async def test_429_raises_rate_limit_error(http, httpx_mock):
         await client.read("companyinfo", "9999")
 ```
 
-# Testing the FastMCP server (`tests/test_server.py`)
+# Testing the FastMCP tools (`tests/<entity>/test_tool.py`)
 
-Drive tools through FastMCP's in-memory client rather than over HTTP:
+The per-domain tool tests live in `tests/<entity>/test_tool.py` and drive the
+mounted tools through FastMCP's in-memory client rather than over HTTP. The shared
+helpers (`_client`, `_call_tool`, `_mock_token`, `UPSTASH_GET_URL`) live in
+`tests/conftest.py` and are imported (`from tests.conftest import ...`).
+`tests/test_server.py` keeps only the server-level tests (`build_auth`, `/health`).
 
 ```python
 from fastmcp import Client
